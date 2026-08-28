@@ -2,16 +2,30 @@ name: VPS GETPOST
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */5 * * *"
+    inputs:
+      region:
+        description: 'Server region — chọn singapore để đỡ delay (mặc định)'
+        required: false
+        default: 'singapore'
+        type: choice
+        options:
+          - singapore
+          - auto
+    schedule:
+      - cron: "0 */5 * * *"
 
 concurrency:
   group: vps-bore-runner
   cancel-in-progress: true
 
+env:
+  REGION: ${{ inputs.region || 'singapore' }}
+  BORE_SERVER: bore.pub  # anycast — singapore PoP gần nhất ~10-30ms, xa US ~200ms
+
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-latest  # GitHub hosted US/EU — muốn Singapore thật thì dùng self-hosted: runs-on: [self-hosted, singapore] (xem README)
+    # Để dùng runner Singapore self-hosted, đổi thành: runs-on: [self-hosted, singapore]
     permissions:
       contents: write
     timeout-minutes: 1440
@@ -22,6 +36,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Select Region — Singapore low delay
+        run: |
+          Write-Host "🌏 Region selected: $env:REGION"
+          Write-Host "Runner location: GitHub hosted windows-latest (US/EU ~180ms delay)"
+          Write-Host "Để có Singapore thật (5-20ms), cần self-hosted runner tại SG (Vultr/DigitalOcean ap-southeast-1) và đổi runs-on: [self-hosted, singapore]"
+          if ($env:REGION -eq "singapore") { Write-Host "✅ Ưu tiên Singapore PoP bore.pub" }
+
       - name: Download and Extract Bore
         run: |
           Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile bore.zip
@@ -31,10 +52,19 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          $pass = ConvertTo-SecureString "GetPostVN2026@" -AsPlainText -Force
-          New-LocalUser "admin" -Password $pass -FullName "admin"
+          # Generate random strong password 14 chars to avoid brute force
+          $chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz0123456789!@#$%&*"
+          $PASS = -join (1..14 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+          # Ensure at least one of each class, regenerate if needed
+          while ($PASS -notmatch "[A-Z]" -or $PASS -notmatch "[a-z]" -or $PASS -notmatch "[0-9]" -or $PASS -notmatch "[!@#$%&*]") {
+            $PASS = -join (1..14 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+          }
+          $secPass = ConvertTo-SecureString $PASS -AsPlainText -Force
+          New-LocalUser "admin" -Password $secPass -FullName "admin"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "admin"
           Add-LocalGroupMember -Group "Administrators" -Member "admin"
+          echo "RDP_PASS=$PASS" >> $env:GITHUB_ENV
+          Write-Host "✅ RDP user admin created with random password"
 
       - name: Tối ưu Registry 4K
         run: |
@@ -45,7 +75,12 @@ jobs:
 
       - name: Monitor Bore Stream & Force Update File
         run: |
-          $PASS = "GetPostVN2026@"
+          $PASS = $env:RDP_PASS
+          if (-not $PASS) {
+            # Fallback generate if env missing (manual dispatch without previous step)
+            $chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz0123456789!@#$%&*"
+            $PASS = -join (1..14 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+          }
           $USER = "admin"
           $lastFullAddress = ""
 
