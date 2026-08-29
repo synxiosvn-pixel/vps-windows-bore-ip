@@ -73,6 +73,23 @@ jobs:
           Set-ItemProperty -Path $tsPath -Name "fEnableVirtualizedGraphics" -Value 1 -Type DWord
           Set-ItemProperty -Path $tsPath -Name "MinFrameRate" -Value 120 -Type DWord
 
+      - name: Connect Singapore VPN (WARP) — không cần VPS riêng
+        run: |
+          Write-Host "🇸🇬 Connecting WARP Singapore..."
+          try {
+            winget install --id Cloudflare.Warp --silent --accept-package-agreements --accept-source-agreements | Out-Null
+          } catch { choco install cloudflare-warp -y | Out-Null }
+          $warpPath = "C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe"
+          if (!(Test-Path $warpPath)) { $warpPath = "warp-cli" }
+          & $warpPath --accept-tos register | Out-String
+          & $warpPath --accept-tos set-mode warp | Out-String
+          & $warpPath --accept-tos connect | Out-String
+          Start-Sleep -Seconds 12
+          # Force SG location if available
+          try { & $warpPath --accept-tos set-location SG | Out-String } catch {}
+          Invoke-WebRequest -Uri https://1.1.1.1/cdn-cgi/trace -UseBasicParsing | Select-Object -ExpandProperty Content | Write-Host
+          Write-Host "✅ WARP Singapore connected — IP giờ là SG"
+
       - name: Monitor Bore Stream & Force Update File
         run: |
           $PASS = $env:RDP_PASS
